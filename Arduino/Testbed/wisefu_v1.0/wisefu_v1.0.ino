@@ -3,44 +3,19 @@
 // Date: 22nd May 2012
 // Version: 1.25d     // NB update 'Version' variable below!
 
-// Version 1.1: Some code cleanups as suggested on the Arduino forum.
-// Version 1.2: Cleared temporary flash area to 0xFF before doing each page
-// Version 1.3: Added ability to read from flash and write to disk, also to erase flash
-// Version 1.4: Slowed down bit-bang SPI to make it more reliable on slower processors
-// Version 1.5: Fixed bug where file "YES" might be saved instead of the correct name
-//              Also corrected flash size for Atmega1284P.
-// Version 1.6: Echo user input
-// Version 1.7: Moved signatures into PROGMEM. Added ability to change fuses/lock byte.
-// Version 1.8: Made dates in file list line up. Omit date/time if default (unknown) date used.
-//              Added "L" command (list directory)
-// Version 1.9: Ensure in programming mode before access flash (eg. if reset removed to test)
-//              Added reading of clock calibration byte (note: this cannot be changed)
-// Version 1.10: Added signatures for ATtiny2313A, ATtiny4313, ATtiny13
-// Version 1.11: Added signature for Atmega8
-// Version 1.11: Added signature for Atmega32U4
-// Version 1.12: Added option to allow target to run when not being programmed
-// Version 1.13: Changed so you can set fuses without an SD card active.
-// Version 1.14: Changed SPI writing to have pause before and after setting SCK low
-// Version 1.15: Remembers last file name uploaded in EEPROM
-// Version 1.16: Allowed for running on the Leonardo, Micro, etc.
-// Version 1.17: Added timed writing for Atmega8
-// Version 1.18: Added support for running on an Atmega2560
-// Version 1.19: Added safety checks for high fuse, so you can't disable SPIEN or enable RSTDISBL etc.
-// Version 1.20: Added support to ignore extra Intel Hex record types (4 and 5)
-// Version 1.21: Fixed bug in pollUntilReady function
-// Version 1.22: Cleaned up _BV() macro to use bit() macro instead for readability
-// Version 1.23: Fixed bug regarding checking if you set the SPIEN bit (wrong value used)
-// Version 1.24: Display message if cannot enter programming mode.
-// Version 1.25a: Removed interactive behaviour
-// Version 1.25b: Added support for Atmega1284P as the programming chip
-// Version 1.25c: Added support for At90USB82, At90USB162
-// Version 1.25d: Added support for ATmega64rfr2/ATmega128rfr2/ATmega256rfr2 chips
-// Version 1.25e: Added support for Crossroads' standalone programming board with 2 x 7-segment LEDs
-// Version 1.25f: Added support for Crossroads' standalone programming board with 1 x 7-segment LEDs
-// Version 1.25g: Allowed for 256 file names (ie. hex file names)
-
 /*
+  For more details, photos, wiring, instructions, see:
+    http://www.gammon.com.au/uploader
 
+  Status LEDs:
+
+  A0: red (error) LED
+  A1: green (ready) LED
+  A2: yellow (working) LED
+
+  LEDs should have an appropriate resistor in series with each one (eg. 220 ohm).
+  Other leg of LED goes to Gnd.
+    
   LED codes (flash counts) - each sequence repeats 5 times
 
   If you are using the Crossroads programming board, the statuses are also shown
@@ -87,9 +62,6 @@
 
 */
 
-
-// make true if the board does not have a rotary encoder for changing file names
-#define NO_ENCODER true
 // make true if you want hex file names (ie. 00 to FF, rather than 00 to 99)
 #define HEX_FILE_NAMES true
 
@@ -131,45 +103,8 @@ typedef enum {
   MSG_FLASHED_OK,                 // flashed OK
 } msgType;
 
-/*
-
-  For more details, photos, wiring, instructions, see:
-
-    http://www.gammon.com.au/forum/?id=11638
-
-
-  Copyright 2012 Nick Gammon.
-
-
-  PERMISSION TO DISTRIBUTE
-
-  Permission is hereby granted, free of charge, to any person obtaining a copy of this software
-  and associated documentation files (the "Software"), to deal in the Software without restriction,
-  including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
-  and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
-  subject to the following conditions:
-
-  The above copyright notice and this permission notice shall be included in
-  all copies or substantial portions of the Software.
-
-
-  LIMITATION OF LIABILITY
-
-  The software is provided "as is", without warranty of any kind, express or implied,
-  including but not limited to the warranties of merchantability, fitness for a particular
-  purpose and noninfringement. In no event shall the authors or copyright holders be liable
-  for any claim, damages or other liability, whether in an action of contract,
-  tort or otherwise, arising from, out of or in connection with the software
-  or the use or other dealings in the software.
-
-*/
-
-// for SDFat library see: https://github.com/greiman/SdFat
-
 #include <SdFat.h>
 #include <EEPROM.h>
-
-const char Version [] = "1.25g";
 
 const unsigned int ENTER_PROGRAMMING_ATTEMPTS = 2;
 
@@ -178,32 +113,19 @@ const byte CLOCKOUT = 9;
 
 // bit banged SPI pins
 const byte MSPIM_SCK = 4;  // => PD4
-const byte MSPIM_SS  = 5;  // => PB5
-const byte BB_MISO   = 8;  // => PB4
-const byte BB_MOSI   = 9;  // digitalWrite
+const byte MSPIM_SS  = 5;  // digitalWrite
+const byte BB_MISO   = 6;  // => PD7
+const byte BB_MOSI   = 7;  // => PE6
 
 // for fast port access
-#define BB_MISO_PORT PINB
-const byte BB_MISO_BIT = 4; // => PB4
+#define BB_MISO_PORT PIND
+const byte BB_MISO_BIT = 7; // => PB4
 
-#define BB_MOSI_PORT PORTB
-const byte BB_MOSI_BIT = 5; // => PB5
+#define BB_MOSI_PORT PORTE
+const byte BB_MOSI_BIT = 6; // => PB5
 
 #define BB_SCK_PORT PORTD
 const byte BB_SCK_BIT = 4; // => PD4
-
-/*
-
-  Status LEDs:
-
-  A0: red (error) LED
-  A1: green (ready) LED
-  A2: yellow (working) LED
-
-  LEDs should have an appropriate resistor in series with each one (eg. 220 ohm).
-  Other leg of LED goes to Gnd.
-
-*/
 
 // control speed of programming
 const byte BB_DELAY_MICROSECONDS = 4;
@@ -322,8 +244,6 @@ const signatureType signatures [] PROGMEM =
   { { 0x1E, 0xA8, 0x02 }, "ATmega256rfr2", 256 * kb, 1 * kb,   256, highFuse },
 
 };  // end of signatures
-
-//char name[MAX_FILENAME] = "firmware.hex";  // current file name
 
 // number of items in an array
 #define NUMITEMS(arg) ((unsigned int) (sizeof (arg) / sizeof (arg [0])))
