@@ -1,3 +1,10 @@
+#include <SdFat.h>
+#include <EEPROM.h>
+#include <Crypto.h>
+#include <BLAKE2s.h>
+#include <string.h>
+#include <avr/pgmspace.h>
+
 // Atmega hex file uploader (from SD card)
 // Author: Nick Gammon
 // Date: 22nd May 2012
@@ -15,7 +22,7 @@
 
   LEDs should have an appropriate resistor in series with each one (eg. 220 ohm).
   Other leg of LED goes to Gnd.
-    
+
   LED codes (flash counts) - each sequence repeats 5 times
 
   If you are using the Crossroads programming board, the statuses are also shown
@@ -103,8 +110,6 @@ typedef enum {
   MSG_FLASHED_OK,                 // flashed OK
 } msgType;
 
-#include <SdFat.h>
-#include <EEPROM.h>
 
 const unsigned int ENTER_PROGRAMMING_ATTEMPTS = 2;
 
@@ -292,6 +297,32 @@ enum {
 };
 
 
+
+//------------------------------------------------------------------------------
+//      COMMANDES
+//------------------------------------------------------------------------------
+char command;
+char serialContent[32];
+char serialBuffer;
+
+
+
+//------------------------------------------------------------------------------
+//      CRYPTO
+//------------------------------------------------------------------------------
+#define HASH_SIZE 32
+#define DATA_SIZE 20
+#define SALT "wisefu2017GFI" // size = 13
+char challenge[DATA_SIZE + sizeof(SALT)] = SALT;
+BLAKE2s blake2s;
+uint8_t auth_hash[HASH_SIZE];
+bool isAuthenticated, isAuthenticating;
+
+
+
+//------------------------------------------------------------------------------
+//      MAJ FIRMWARE
+//------------------------------------------------------------------------------
 // blink one or two LEDs for "times" times, with a delay of "interval". Wait a second and do it again "repeat" times.
 void blink (const int whichLED1,
             const int whichLED2,
@@ -835,7 +866,7 @@ bool startProgramming ()
     confirm = BB_SPITransfer (0);
     BB_SPITransfer (0);
     interrupts ();
-    
+
     Serial.println("startProgramming");
     Serial.println(confirm, HEX);
     Serial.println(programAcknowledge, HEX);
@@ -877,10 +908,10 @@ void getSignature ()
     sig [i] = program (readSignatureByte, 0, i);
   }  // end for each signature byte
 
-Serial.println("signature");
-Serial.println(sig[0], HEX);
-Serial.println(sig[1], HEX);
-Serial.println(sig[2], HEX);
+  Serial.println("signature");
+  Serial.println(sig[0], HEX);
+  Serial.println(sig[1], HEX);
+  Serial.println(sig[2], HEX);
 
   for (unsigned int j = 0; j < NUMITEMS (signatures); j++)
   {
@@ -1000,7 +1031,7 @@ void setup ()
   {
     ShowMessage (MSG_NO_SD_CARD);
     delay (1000);
-  Serial.println("no sd");
+    Serial.println("no sd");
   }
 
   Serial.println("end setup");
@@ -1063,46 +1094,137 @@ bool writeFlashContents ()
   return errors == 0;
 }  // end of writeFlashContents
 
+
+//------------------------------------------------------------------------------
+//      COMMANDES
+//------------------------------------------------------------------------------
+void readCommand() {
+  // start authentication process
+  if (command == 'A') {
+    Serial.println("startAuthent");
+    startAuthent();
+    isAuthenticating = true;
+  } else if (command == 'R') {
+    Serial.readBytes(serialContent, 32);
+    Serial.println("checkAuthent");
+    checkAuthent();
+    isAuthenticating = false;
+  }
+}
+
+//------------------------------------------------------------------------------
+//      CRYPTO
+//------------------------------------------------------------------------------
+void checkAuthent() {
+  if (memcmp(auth_hash, serialContent, sizeof(auth_hash)) != 0) {
+    Serial.println("auth KO...");
+  } else {
+    Serial.println("auth OK!");
+    isAuthenticated = true;
+  }
+}
+
+void createChallenge() {
+  char nextchar1;
+  char nextchar2;
+  for (int count = 13; count < sizeof(challenge); count++) {
+    nextchar1 = random(65, 90);
+    nextchar2 = random(97, 122);
+    if (random(2) == 1) {
+      challenge[count] = nextchar1;
+    } else {
+      challenge[count] = nextchar2;
+    }
+  }
+}
+
+void generateHash() {
+  blake2s.reset();//SALT, sizeof(SALT), HASH_SIZE);
+  for (size_t posn = 0; posn < DATA_SIZE + 13; posn ++) {
+    blake2s.update(challenge + posn, 1);
+  }
+  blake2s.finalize(auth_hash, sizeof(auth_hash));
+}
+
+void startAuthent()
+{
+  isAuthenticating = true;
+  createChallenge();
+  generateHash();
+  Serial.println("Challenge sent: ");
+  for (int count = sizeof(SALT) - 1; count < sizeof(challenge) - 1; count++) {
+    Serial.print((char)challenge[count]);
+  }
+  Serial.println("");
+  Serial.println("Hash: ");
+  for (char k = 0; k < HASH_SIZE; k++) {
+    //Serial.print(auth_hash[k], HEX);
+    Serial.print(auth_hash[k]);
+  }
+
+}
+
 //------------------------------------------------------------------------------
 //      LOOP
 //------------------------------------------------------------------------------
+char pos;
 void loop ()
 {
 
   digitalWrite (readyLED, HIGH);
 
-  Serial.println("initial delay");
-  delay(2000);
-  Serial.println("start!");
+  isAuthenticating = false;
 
-  digitalWrite (readyLED, LOW);
+  pos = 0;
+  if (Serial.available()) {
+    /*while (Serial.available()) {
+      serialBuffer = Serial.read();
+      if (pos == 0) {
+        command = serialBuffer;
+        pos++;
+      } else if (serialBuffer != '#') {
+        serialContent[pos] = serialBuffer;
+        pos++;
+      } else {
+        readCommand();
+      }
+    }*/
+    command = Serial.read();
+    readCommand();
+  }
 
-  if (!startProgramming ())
-  {
-    ShowMessage (MSG_CANNOT_ENTER_PROGRAMMING_MODE);
-    return;
-  }  // end of could not enter programming mode
+  if (isAuthenticated) {
 
-  getSignature ();
-  getFuseBytes ();
+    digitalWrite (readyLED, LOW);
 
-  // don't have signature? don't proceed
-  if (foundSig == -1)
-  {
-    ShowMessage (MSG_CANNOT_FIND_SIGNATURE);
-    return;
-  }  // end of no signature
+    if (!startProgramming ())
+    {
+      ShowMessage (MSG_CANNOT_ENTER_PROGRAMMING_MODE);
+      return;
+    }  // end of could not enter programming mode
 
-  digitalWrite (workingLED, HIGH);
-  bool ok = writeFlashContents ();
-  digitalWrite (workingLED, LOW);
-  digitalWrite (readyLED, LOW);
-  stopProgramming ();
-  delay (500);
+    getSignature ();
+    getFuseBytes ();
 
-  if (ok)
-    ShowMessage (MSG_FLASHED_OK);
+    // don't have signature? don't proceed
+    if (foundSig == -1)
+    {
+      ShowMessage (MSG_CANNOT_FIND_SIGNATURE);
+      return;
+    }  // end of no signature
 
+    digitalWrite (workingLED, HIGH);
+    bool ok = writeFlashContents ();
+    digitalWrite (workingLED, LOW);
+    digitalWrite (readyLED, LOW);
+    stopProgramming ();
+    delay (500);
+
+    if (ok)
+      ShowMessage (MSG_FLASHED_OK);
+
+    isAuthenticated = false;
+  }
 }  // end of loop
 
 

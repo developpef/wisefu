@@ -1,0 +1,327 @@
+#include <MD5.h>
+#include <SoftwareSerial.h>   //Software Serial Port
+// Pins used for Bluetooth Module
+#define RxD 6
+#define TxD 7
+#define BTDisc 9
+#define RelayPin 13 //Hook to D13 for on-board LED in testing. Change this to whatever pin the Relay is hooked to later.
+SoftwareSerial blueToothSerial(RxD,TxD);
+
+const String password = ""; //Set a password here. (To be honest, I have no idea what will happen if it is left blank, probably nothing, but it would be silly as it would provide zero security as a result)
+const String cmdpass = ""; //Avoids leaking the auth pass through repeated forced command sets. Do not make this too long (over 10 chars), and make it different to the main password.
+int A1State;
+const int maxlen = 128; // Maximum line length permitted for serial buffers, could probably make this shorter.
+String currChallenge;
+String currHash;
+String currCmdChallenge;
+String btCommandBuffer; //String isn't great for this as it could be overflowed, but that can be avoided later on by putting in a limiter which returns ERROR
+String serCommandBuffer; //Ditto as for above, but this isn't implemented yet because we're not talking much serial data anyway.
+boolean isConnected;
+boolean isAuthenticating;
+boolean isAuthenticated;
+boolean isInvalidBTBuffer;
+boolean isBTEOL;
+int terminatingChar = 13; //Line terminator character (I'd use either CR or LF)
+char c;
+
+// Command hashes, pretty sure there is a better way of storing these?
+String cmdUpHash;
+String cmdDownHash;
+String cmdToggleHash;
+
+/*
+Vague ToDo list:
+	Move all debugging strings into ifdef fields
+	Figure out cause of memory leak
+	Add functionality for UP and DOWN commands
+	Properly implement the DISCONNECT command wherever it is needed, or at the least review and figure out what I was thinking at the time
+	Clean up code and comments
+*/
+
+
+void setup() 
+{ 
+  Serial.begin(115200);
+  pinMode(RxD, INPUT);
+  pinMode(TxD, OUTPUT);
+  pinMode(BTDisc, OUTPUT);
+  pinMode(RelayPin, OUTPUT);
+  digitalWrite(RelayPin, LOW);
+  randomSeed(analogRead(7));
+  setupBlueToothConnection();
+  isConnected = false;
+  isAuthenticating = false;
+  isAuthenticated = false;
+  isInvalidBTBuffer = false;
+  isBTEOL = false;
+} 
+
+void setupBlueToothConnection()
+{
+  blueToothSerial.begin(38400); //Set BluetoothBee BaudRate to default baud rate 38400
+  blueToothSerial.print("\r\n+STWMOD=0\r\n"); //set the bluetooth work in slave mode
+  blueToothSerial.print("\r\n+STNA=Garageduino\r\n"); //set the bluetooth name
+  blueToothSerial.print("\r\n+STOAUT=1\r\n"); // Permit Paired device to connect me
+  blueToothSerial.print("\r\n+STAUTO=0\r\n"); // Auto-connection should be forbidden here
+  delay(2000); // This delay is required.
+  blueToothSerial.print("\r\n+INQ=1\r\n"); //make the slave bluetooth inquirable 
+  Serial.println(F("The slave bluetooth is inquirable!"));
+  delay(2000); // This delay is also required. For reasons.
+  blueToothSerial.flush();
+}
+
+void loop() 
+{
+  if(blueToothSerial.available()){//check if there's any data sent from the remote bluetooth shield
+    if(isConnected == true) { //No point reading the BT module if nothing is connected....
+      while ((blueToothSerial.available() > 0)){ // As long as EOL not found and there's more to read, keep reading
+        if((btCommandBuffer.length() < maxlen))
+        {
+          c = blueToothSerial.read();
+          //Is this character an end of line character?
+          if (c == terminatingChar) 
+          {
+            Serial.println(F("BT-EOL Received"));
+            isBTEOL = true;
+            break;
+          }
+          else {
+            btCommandBuffer = btCommandBuffer + c;
+          }
+        }
+        else
+        {
+          Serial.println(F("Buffer Overflow"));
+          btCommandBuffer = ""; //Reset command buffer, we obviously have junk here... No point wasting the ram...
+          isInvalidBTBuffer = true;
+        }
+      }
+      //Ignore buffer if invalid is true...
+      if((isInvalidBTBuffer == false))
+      {
+        if(isBTEOL) {
+          //So, what is the line we received? 
+          //Serial.println("RAWLine: " + btCommandBuffer);
+          //      if (strcmp(serialReadString, "DISCONNECT") == 0) disconnectBT(); // ToDo, for now make something do the basic AUTH process, make it more secure once that works...
+          if((btCommandBuffer == "AUTHENTICATE"))
+          {
+            startAuth(); // The AUTHENTICATE line is simply a request to send a challenge, it should have no other input, spaces or anything on the same line.
+          }
+          if(btCommandBuffer.startsWith("AUTH-RESPONSE")) 
+          {
+            if(isAuthenticating == true)
+            {
+              verifyAuth(String(btCommandBuffer));
+            }
+            else
+            {
+              blueToothSerial.println("ERROR");
+              Serial.println(F("Device attempted to authenticate without asking for challenge (AUTHENTICATE)"));
+              disconnectBT();
+            }
+          }
+          if(btCommandBuffer == "REQ-COMMANDCHALLENGE") {
+            if(isAuthenticated) //This should only occur once authentication has passed. If this command comes through while isAuthenticated == false, return error and all that stuff.
+            {
+              //Generate a challenge and send to the device. This will then be passed back after hashing against each command type on the device.
+              //Also generate static buffers of each command for fast comparison.
+              createCmdChallenge();
+            }
+            else
+            {
+              blueToothSerial.println("ERROR");
+              Serial.println(F("Attempted to negotiate command challenge set without being authenticated.")); 
+              disconnectBT();
+            }
+          }
+          if(btCommandBuffer.startsWith("CTRLCMD")) {
+            //Check for commands, if unmatched respond ERROR but don't disconnect (might change this behavior, depending on security requirements). 
+            //This bit prevents commands unless authenticated. This IS IMPORTANT!
+            if(isAuthenticated) {
+              Serial.println(F("Command Received."));
+              verifyCommand(btCommandBuffer.substring(8)); //Passes just the hash, the subroutine will do the comparison.
+            }
+            else {
+              //We're not authenticated, so issue a disconnect for being naughty
+              Serial.println(F("Command received while not Authenticated. Disconnecting.")); 
+              disconnectBT();
+            }
+          }
+          if(btCommandBuffer.startsWith("DISCONNECT")) {
+            //Issue disconnect.
+            Serial.println(F("User requested disconnect"));
+            disconnectBT();
+          }
+        }
+      }
+      else {
+        blueToothSerial.println("ERROR");
+        Serial.println(F("BT Buffer overflowed, likely due to junk input. Reset and ignored"));
+      }
+      if(isBTEOL || isInvalidBTBuffer) {
+        btCommandBuffer = ""; //Reset the buffer...
+        isInvalidBTBuffer = false; //...and the state of the buffer...
+        isBTEOL = false; //...and whether we got an EOL
+      }
+    }
+  }
+  A1State = analogRead(A1);
+  if((A1State >= 350) && (isConnected == false))
+  {
+    Serial.println(F("BT Device is connected"));
+    isConnected = true;
+    blueToothSerial.println("CONNECTED"); //Send something so the Android device knows to send an AUTHENTICATE
+  }
+  if((A1State <= 350) && (isConnected == true))
+  {
+    Serial.println(F("BT Device is disconnected"));
+    isConnected = false;
+    isAuthenticating = false;
+    isAuthenticated = false;
+    currChallenge = "";
+    currCmdChallenge = "";
+    currHash = "";
+    cmdUpHash = "";
+    cmdDownHash = "";
+    cmdToggleHash = "";
+  }
+} 
+
+String createChallenge()
+{
+  String challenge = "";
+  char nextchar1;
+  char nextchar2;
+  for (int count = 0; count <= 32; count++) {
+    nextchar1 = random(65, 90);
+    nextchar2 = random(97, 122);
+    if(random(2) == 1) {
+      challenge = challenge + String(nextchar1); 
+    }
+    else
+    {
+      challenge = challenge + String(nextchar2); 
+    }
+  }
+  return challenge;
+}
+
+String createMD5Hash(String input)
+{
+  char toHash[50];
+  String(password + input).toCharArray(toHash, 50);
+  unsigned char* hash=MD5::make_hash(toHash);  
+  char *md5str = MD5::make_digest(hash, 16);
+  return md5str;  
+}
+
+String createCMDMD5Hash(String input, String CMD)
+{
+  char toHash[50];
+  String(cmdpass + CMD + input).toCharArray(toHash, 50);
+  unsigned char* hash=MD5::make_hash(toHash);  
+  char *md5str = MD5::make_digest(hash, 16);
+  return md5str;  
+}
+
+void startAuth()
+{
+  currChallenge = createChallenge();
+  currHash = createMD5Hash(currChallenge);
+  blueToothSerial.println("CHALLENGE " + currChallenge);
+  isAuthenticating = true;
+  Serial.println("Challenge sent: " + currChallenge);
+}
+
+void createCmdChallenge()
+{
+  Serial.println(F("Generating command challenge"));
+  currCmdChallenge = createChallenge();
+  Serial.println(F("Generated command challenge"));
+  // Seem to run out of RAM here. Need to rework things to avoid eating it all.
+  //cmdUpHash = createCMDMD5Hash(currCmdChallenge, "UP");
+  //cmdDownHash = createCMDMD5Hash(currCmdChallenge, "DOWN");
+  cmdToggleHash = createCMDMD5Hash(currCmdChallenge, "TOGGLE");
+  blueToothSerial.println("CMD-CHALLENGE " + currCmdChallenge);
+  Serial.println("Command hashes generated using challenge: " + currCmdChallenge);
+  // Debugging
+  //Serial.println("UP: " + cmdUpHash);
+  //Serial.println("DOWN: " + cmdDownHash);
+  Serial.println("TOGGLE: " + cmdToggleHash);
+}
+
+void verifyCommand(String inputstring)
+{
+  boolean isCommand = false;
+  if(inputstring == cmdUpHash) {
+    isCommand = true;
+    Serial.println(F("Open door command received."));
+    //Not yet implemented. Will need to determine door state 
+  }
+  if(inputstring == cmdDownHash) {
+    isCommand = true;
+    Serial.println(F("Close door command received."));
+    //Not yet implemented. Will need to determine door state
+  }
+  if(inputstring == cmdToggleHash) {
+    // Do whatever is needed to toggle door state. Probably just flick the control relay, depending on garage door implementation. Toggle relay for 200ms.
+    isCommand = true;
+    Serial.println(F("Toggle door state command received."));
+    digitalWrite(RelayPin, HIGH);
+    delay(200);
+    digitalWrite(RelayPin, LOW);
+    delay(200); //Avoids screwing with the relay if some idiot floods it with command codes
+  }
+  if(!isCommand) { //For when a command is sent that isn't a command. Disconnect on that basis to prevent credential leakages longer term.
+    blueToothSerial.println("ERROR");
+    Serial.println(F("Command code received but did not match recorded hashes. Disconnecting"));
+    disconnectBT();
+  }
+  else
+  {
+    //Successful command, so let the Android app know this.
+    blueToothSerial.println("CMD-SUCCESS");    
+  }
+}
+
+void verifyAuth(String inputString)
+{
+  //Trim off the AUTH-RESPONSE bit, use the space character or : to separate the two, or just substring it...
+  if(inputString.substring(14) == currHash)
+  {
+    //Authenticated... It turns out that the module can not be connected to by more than one device at a time. We will rely on this to ensure resets occur of all data. We can also put in a timeout of some sort to be sure later too.
+    isAuthenticated = true; 
+    blueToothSerial.println("AUTH-SUCCESS");
+    Serial.println(F("Authentication Successful"));
+  }
+  else
+  {
+    //Authentication failed. Issue disconnect and all that stuff...
+    isAuthenticated = false;
+    isAuthenticating = false;
+    blueToothSerial.println("ERROR");
+    Serial.println(F("Authentication Failed"));
+    disconnectBT();
+  }
+}
+
+void disconnectBT()
+{
+  //Disconnect any connected bluetooth devices. This subroutine does nothing but issue the actual disconnect, all variables are reset externally.
+  //It does however check to see if there is actually anything connected first via pin A1.
+  A1State = analogRead(A1);
+  if((A1State >= 350))
+  {
+    Serial.println(F("Disconnect issued while BT Device is connected - Disconnecting"));
+    //Set D9 high then low.
+    delay(500); //Allow current buffer flush to complete. Using black magic to decide on half a second here.
+    digitalWrite(BTDisc, HIGH);
+    delay(100);
+    digitalWrite(BTDisc, LOW);
+  }
+  if((A1State <= 350))
+  {
+    Serial.println(F("Disconnect issued while BT Device is disconnected - Ignoring"));
+    //Should never happen. Do nothing I guess?
+  }
+}
