@@ -6,14 +6,17 @@
 #define HASH_SIZE 32
 #define DATA_SIZE 20
 #define SALT "wisefu2017GFI" // size = 13
+char challenge[DATA_SIZE + sizeof(SALT)] = SALT;
+BLAKE2s blake2s;
+uint8_t auth_hash[HASH_SIZE];
+bool isAuthenticated, isAuthenticating;
+
 
 char command;
 char serialBuffer;
-char challenge[DATA_SIZE + sizeof(SALT)] = SALT;
+uint8_t serialContent[128];
+char challengeResponse[32];
 
-BLAKE2s blake2s;
-
-uint8_t value[HASH_SIZE];
 
 void createChallenge() {
   char nextchar1;
@@ -34,7 +37,7 @@ void generateHash() {
   for (size_t posn = 0; posn < DATA_SIZE + 13; posn ++) {
     blake2s.update(challenge + posn, 1);
   }
-  blake2s.finalize(value, sizeof(value));
+  blake2s.finalize(auth_hash, sizeof(auth_hash));
 }
 
 void startAuthent()
@@ -42,13 +45,13 @@ void startAuthent()
   createChallenge();
   generateHash();
   Serial.println("Challenge sent: ");
-  for (int count = sizeof(SALT)-1; count < sizeof(challenge)-1; count++) {
+  for (int count = sizeof(SALT) - 1; count < sizeof(challenge) - 1; count++) {
     Serial.print((char)challenge[count]);
   }
   Serial.println("");
   Serial.println("Hash: ");
   for (char k = 0; k < HASH_SIZE; k++) {
-    Serial.print(value[k],HEX);
+    Serial.print(auth_hash[k], HEX);
   }
 
 }
@@ -57,6 +60,47 @@ void readCommand() {
   // start authentication process
   if (command == 'A') {
     startAuthent();
+  }
+}
+
+void checkAuthent() {
+  /*char pos = 0;
+    char respIndex = 0;
+    serialContent = '\0';
+    Serial.println("reading...");
+    while (Serial.available()) {
+    serialBuffer = Serial.read();
+    if (serialBuffer != '-') {
+      serialContent += serialBuffer;
+    } else {
+      Serial.println("read:");
+      Serial.println(serialContent);
+      challengeResponse[respIndex] = atoi(serialContent);
+      Serial.println(challengeResponse[respIndex]);
+      serialContent = '\0';
+      respIndex++;
+    }
+    pos++;
+    }
+    Serial.println("done");
+    for (char i = 0; i < 32; i++) {
+    Serial.println(challengeResponse[i]);
+    }*/
+
+  char numb[3];
+  char respIndex = 0, pos = 0;
+  Serial.println("_received:");
+  for (uint8_t i = 0; i < 32; i++) {
+    Serial.print(serialContent[i]);
+    Serial.print(" ");
+  }
+  Serial.println("");
+  Serial.println("_done");
+  
+  if (memcmp(auth_hash, serialContent, sizeof(auth_hash)) != 0) {
+    Serial.println("auth KO...");
+  } else {
+    Serial.println("auth OK!");
   }
 }
 
@@ -71,11 +115,16 @@ void setup() {
 
 void loop() {
   if (Serial.available()) {
-    serialBuffer = Serial.read();
-    if (serialBuffer != '#') {
-      command = serialBuffer;
-    } else {
-      readCommand();
+    char command = Serial.read();
+    char pos = 0;
+    while (Serial.available()) {
+      serialContent[pos] = Serial.read();
+      pos++;
+    }
+    if (command == 'A') {
+      startAuthent();
+    } else if (command == 'R') {
+      checkAuthent();
     }
   }
 }
