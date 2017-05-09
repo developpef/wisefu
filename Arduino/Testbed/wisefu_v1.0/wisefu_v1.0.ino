@@ -108,6 +108,10 @@ typedef enum {
   MSG_BAD_START_ADDRESS,          // file start address invalid
   MSG_VERIFICATION_ERROR,         // verification error after programming
   MSG_FLASHED_OK,                 // flashed OK
+
+  MSG_IS_AUTHENTICATING,
+  MSG_AUTH_KO,
+  MSG_AUTH_OK
 } msgType;
 
 
@@ -383,6 +387,10 @@ void ShowMessage (const byte which)
     case MSG_BAD_START_ADDRESS:              blink (errorLED, noLED, 7, 5); break;
     case MSG_VERIFICATION_ERROR:             blink (errorLED, noLED, 8, 5); break;
     case MSG_FLASHED_OK:                     blink (readyLED, noLED, 3, 10); break;
+
+    case MSG_IS_AUTHENTICATING:               blink (workingLED, noLED, 1, 10); break;
+    case MSG_AUTH_KO:                         blink (errorLED, workingLED, 3, 2); break;
+    case MSG_AUTH_OK:                         blink (readyLED, workingLED, 3, 2); break;
 
     default:                                  blink (errorLED, 10, 10);  break;   // unknown error
   }  // end of switch on which message
@@ -867,10 +875,6 @@ bool startProgramming ()
     BB_SPITransfer (0);
     interrupts ();
 
-    Serial.println("startProgramming");
-    Serial.println(confirm, HEX);
-    Serial.println(programAcknowledge, HEX);
-
     if (confirm != programAcknowledge)
     {
       if (timeout++ >= ENTER_PROGRAMMING_ATTEMPTS)
@@ -907,11 +911,6 @@ void getSignature ()
   {
     sig [i] = program (readSignatureByte, 0, i);
   }  // end for each signature byte
-
-  Serial.println("signature");
-  Serial.println(sig[0], HEX);
-  Serial.println(sig[1], HEX);
-  Serial.println(sig[2], HEX);
 
   for (unsigned int j = 0; j < NUMITEMS (signatures); j++)
   {
@@ -1020,21 +1019,19 @@ void setup ()
   pinMode (workingLED, OUTPUT);
 
   Serial.begin(9600);
-  while (!Serial) {
+  /*while (!Serial) {
     ; // wait for serial port to connect. Needed for native USB port only
-  }
+    }
+  */
 
-  Serial.println("setup");
   // initialize the SD card at SPI_HALF_SPEED to avoid bus errors with
   // breadboards.  use SPI_FULL_SPEED for better performance.
   while (!sd.begin (chipSelect, SPI_HALF_SPEED))
   {
     ShowMessage (MSG_NO_SD_CARD);
     delay (1000);
-    Serial.println("no sd");
   }
 
-  Serial.println("end setup");
 }  // end of setup
 
 
@@ -1096,31 +1093,17 @@ bool writeFlashContents ()
 
 
 //------------------------------------------------------------------------------
-//      COMMANDES
-//------------------------------------------------------------------------------
-void readCommand() {
-  // start authentication process
-  if (command == 'A') {
-    Serial.println("startAuthent");
-    startAuthent();
-    isAuthenticating = true;
-  } else if (command == 'R') {
-    Serial.readBytes(serialContent, 32);
-    Serial.println("checkAuthent");
-    checkAuthent();
-    isAuthenticating = false;
-  }
-}
-
-//------------------------------------------------------------------------------
 //      CRYPTO
 //------------------------------------------------------------------------------
 void checkAuthent() {
   if (memcmp(auth_hash, serialContent, sizeof(auth_hash)) != 0) {
     Serial.println("auth KO...");
+    isAuthenticating = false;
+    ShowMessage(MSG_AUTH_KO);
   } else {
     Serial.println("auth OK!");
     isAuthenticated = true;
+    ShowMessage(MSG_AUTH_OK);
   }
 }
 
@@ -1158,10 +1141,10 @@ void startAuthent()
   Serial.println("");
   Serial.println("Hash: ");
   for (char k = 0; k < HASH_SIZE; k++) {
-    //Serial.print(auth_hash[k], HEX);
-    Serial.print(auth_hash[k]);
+    Serial.print(auth_hash[k], HEX);
+    //Serial.print(auth_hash[k]);
   }
-
+  ShowMessage(MSG_IS_AUTHENTICATING);
 }
 
 //------------------------------------------------------------------------------
@@ -1175,22 +1158,18 @@ void loop ()
 
   isAuthenticating = false;
 
-  pos = 0;
-  if (Serial.available()) {
-    /*while (Serial.available()) {
-      serialBuffer = Serial.read();
-      if (pos == 0) {
-        command = serialBuffer;
-        pos++;
-      } else if (serialBuffer != '#') {
-        serialContent[pos] = serialBuffer;
-        pos++;
-      } else {
-        readCommand();
-      }
-    }*/
+  if (Serial.available() && !isAuthenticating) {
     command = Serial.read();
-    readCommand();
+    pos = 0;
+    while (Serial.available()) {
+      serialContent[pos] = Serial.read();
+      pos++;
+    }
+    if (command == 'A') {
+      startAuthent();
+    } else if (command == 'R') {
+      checkAuthent();
+    }
   }
 
   if (isAuthenticated) {
