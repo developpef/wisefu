@@ -325,6 +325,12 @@ bool isAuthenticated, isAuthenticating;
 
 
 //------------------------------------------------------------------------------
+//      UPLOAD
+//------------------------------------------------------------------------------
+bool isUploading;
+
+
+//------------------------------------------------------------------------------
 //      MAJ FIRMWARE
 //------------------------------------------------------------------------------
 // blink one or two LEDs for "times" times, with a delay of "interval". Wait a second and do it again "repeat" times.
@@ -1147,6 +1153,41 @@ void startAuthent()
   ShowMessage(MSG_IS_AUTHENTICATING);
 }
 
+
+//------------------------------------------------------------------------------
+//      UPLOAD
+//------------------------------------------------------------------------------
+char * fileName = "firmware2.hex";
+char stopChar = '_';
+void uploadFile() {
+  while (!sd.begin (chipSelect, SPI_HALF_SPEED)) {
+    ShowMessage (MSG_NO_SD_CARD);
+    delay (1000);
+  }
+  char charBuff;
+  sd.remove(fileName);
+  File myFile = sd.open(fileName, FILE_WRITE);
+  // if the file opened okay, write to it:
+  if (myFile) {
+    charBuff = Serial.read();
+    while (charBuff != stopChar) {
+      if (Serial.available()) {
+        charBuff = (char)Serial.read();
+        if (charBuff != stopChar) {
+          myFile.print(charBuff);//charBuff);
+        }
+      }
+    }
+    // close the file:
+    myFile.close();
+    Serial.println("done.");
+  } else {
+    // if the file didn't open, print an error:
+    Serial.println("error opening file");
+  }
+  isUploading = false;
+}
+
 //------------------------------------------------------------------------------
 //      LOOP
 //------------------------------------------------------------------------------
@@ -1158,17 +1199,22 @@ void loop ()
 
   isAuthenticating = false;
 
-  if (Serial.available() && !isAuthenticating) {
+  if (Serial.available() && !isAuthenticating && !isUploading) {
     command = Serial.read();
-    pos = 0;
-    while (Serial.available()) {
-      serialContent[pos] = Serial.read();
-      pos++;
-    }
-    if (command == 'A') {
-      startAuthent();
-    } else if (command == 'R') {
-      checkAuthent();
+    if (command == 'U') {
+      isUploading = true;
+      uploadFile();
+    } else {
+      pos = 0;
+      while (Serial.available()) {
+        serialContent[pos] = Serial.read();
+        pos++;
+      }
+      if (command == 'A') {
+        startAuthent();
+      } else if (command == 'R') {
+        checkAuthent();
+      }
     }
   }
 
@@ -1204,6 +1250,5 @@ void loop ()
 
     isAuthenticated = false;
   }
-}  // end of loop
-
+}// end of loop
 
