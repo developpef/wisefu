@@ -1024,6 +1024,8 @@ void setup ()
   pinMode (readyLED, OUTPUT);
   pinMode (workingLED, OUTPUT);
 
+  randomSeed(analogRead(5));
+
   Serial.begin(9600);
   /*while (!Serial) {
     ; // wait for serial port to connect. Needed for native USB port only
@@ -1098,19 +1100,57 @@ bool writeFlashContents ()
 }  // end of writeFlashContents
 
 
+
+void miseAjourCible() {
+  if (isAuthenticated) {
+
+    digitalWrite (readyLED, LOW);
+
+    if (!startProgramming ())
+    {
+      ShowMessage (MSG_CANNOT_ENTER_PROGRAMMING_MODE);
+      return;
+    }  // end of could not enter programming mode
+
+    getSignature ();
+    getFuseBytes ();
+
+    // don't have signature? don't proceed
+    if (foundSig == -1)
+    {
+      ShowMessage (MSG_CANNOT_FIND_SIGNATURE);
+      return;
+    }  // end of no signature
+
+    digitalWrite (workingLED, HIGH);
+    bool ok = writeFlashContents ();
+    digitalWrite (workingLED, LOW);
+    digitalWrite (readyLED, LOW);
+    stopProgramming ();
+    delay (500);
+
+    if (ok)
+      ShowMessage (MSG_FLASHED_OK);
+
+    isAuthenticated = false;
+  }
+}
+
+
 //------------------------------------------------------------------------------
 //      CRYPTO
 //------------------------------------------------------------------------------
 void checkAuthent() {
   if (memcmp(auth_hash, serialContent, sizeof(auth_hash)) != 0) {
-    Serial.println("auth KO...");
-    isAuthenticating = false;
+    //Serial.println("auth KO...");
     ShowMessage(MSG_AUTH_KO);
   } else {
-    Serial.println("auth OK!");
+    //Serial.println("auth OK!");
     isAuthenticated = true;
     ShowMessage(MSG_AUTH_OK);
   }
+
+  isAuthenticating = false;
 }
 
 void createChallenge() {
@@ -1150,7 +1190,6 @@ void startAuthent()
     Serial.print(auth_hash[k], HEX);
     //Serial.print(auth_hash[k]);
   }
-  ShowMessage(MSG_IS_AUTHENTICATING);
 }
 
 
@@ -1160,6 +1199,8 @@ void startAuthent()
 char * fileName = "firmware2.hex";
 char stopChar = '_';
 void uploadFile() {
+  isUploading = true;
+
   while (!sd.begin (chipSelect, SPI_HALF_SPEED)) {
     ShowMessage (MSG_NO_SD_CARD);
     delay (1000);
@@ -1174,17 +1215,18 @@ void uploadFile() {
       if (Serial.available()) {
         charBuff = (char)Serial.read();
         if (charBuff != stopChar) {
-          myFile.print(charBuff);//charBuff);
+          myFile.print(charBuff);
         }
       }
     }
     // close the file:
     myFile.close();
-    Serial.println("done.");
+    //Serial.println("done.");
   } else {
     // if the file didn't open, print an error:
     Serial.println("error opening file");
   }
+
   isUploading = false;
 }
 
@@ -1197,58 +1239,37 @@ void loop ()
 
   digitalWrite (readyLED, HIGH);
 
-  isAuthenticating = false;
-
-  if (Serial.available() && !isAuthenticating && !isUploading) {
-    command = Serial.read();
-    if (command == 'U') {
-      isUploading = true;
-      uploadFile();
-    } else {
-      pos = 0;
-      while (Serial.available()) {
-        serialContent[pos] = Serial.read();
-        pos++;
-      }
-      if (command == 'A') {
-        startAuthent();
-      } else if (command == 'R') {
-        checkAuthent();
-      }
-    }
+  if(isAuthenticating) {
+    blink (workingLED, noLED, 1, 1);
   }
 
-  if (isAuthenticated) {
+  // on lit le serial ici uniquement si on est pas en cours d'upload
+  if (Serial.available() && !isUploading) {
+    command = Serial.read();
 
-    digitalWrite (readyLED, LOW);
-
-    if (!startProgramming ())
-    {
-      ShowMessage (MSG_CANNOT_ENTER_PROGRAMMING_MODE);
-      return;
-    }  // end of could not enter programming mode
-
-    getSignature ();
-    getFuseBytes ();
-
-    // don't have signature? don't proceed
-    if (foundSig == -1)
-    {
-      ShowMessage (MSG_CANNOT_FIND_SIGNATURE);
-      return;
-    }  // end of no signature
-
-    digitalWrite (workingLED, HIGH);
-    bool ok = writeFlashContents ();
-    digitalWrite (workingLED, LOW);
-    digitalWrite (readyLED, LOW);
-    stopProgramming ();
-    delay (500);
-
-    if (ok)
-      ShowMessage (MSG_FLASHED_OK);
-
-    isAuthenticated = false;
+    // demande d'authentification
+    if (command == 'A') {
+      startAuthent();
+    } else if (isAuthenticating) {
+      if (command == 'R') {
+        // on lit tout le serial avant d'aller plus loin
+        // (notamment pour la lecture de la réponse au challenge authent)
+        pos = 0;
+        while (Serial.available()) {
+          serialContent[pos] = Serial.read();
+          pos++;
+        }
+        //
+        checkAuthent();
+      }
+    } else if (isAuthenticated) {
+      // actions disponibles uniquement si authentifié
+      if (command == 'U') {
+        uploadFile();
+      } else if (command == 'M') {
+        miseAjourCible();
+      }
+    }
   }
 }// end of loop
 
