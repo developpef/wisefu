@@ -12,10 +12,11 @@ public class Blake2s {
 
 	public static void main(String[] args) {
 		Blake2s b2s = new Blake2s(32, null);
-		b2s.update("wisefu2017GFIWPKXHRgHWTASWfNbbkTU".getBytes());
+		b2s.update("wisefu2017GFItVFwDvPGsWDnIQxeRHWI".getBytes());
 		byte[] digest = b2s.digest();
 		String hexStr = bytesToHex(digest);
 		System.out.println(hexStr);
+		System.out.print("82 "); // 'R' ASCII
 		for (int i = 0; i < hexStr.length() - 1; i += 2) {
 			String hex = "" + hexStr.charAt(i) + hexStr.charAt(i + 1);
 			System.out.print(Integer.parseInt(hex, 16) + " ");

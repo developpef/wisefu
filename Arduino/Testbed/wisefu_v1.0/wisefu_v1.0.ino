@@ -75,7 +75,7 @@
 const bool allowTargetToRun = true;  // if true, programming lines are freed when not programming
 
 // fixed file name to read from SD card (root directory)
-const char wantedFile [] = "firmware.hex";
+char * wantedFile = "firmware.hex";
 
 // which switch to close to start programming the target chip
 const byte startSwitch = 2;
@@ -146,7 +146,6 @@ const byte RESET = MSPIM_SS;
 const uint8_t chipSelect = SS;
 
 const unsigned long NO_PAGE = 0xFFFFFFFF;
-const int MAX_FILENAME = 13;
 
 
 // actions to take
@@ -308,6 +307,7 @@ enum {
 char command;
 char serialContent[32];
 char serialBuffer;
+char choix_firmware;
 
 
 
@@ -1104,6 +1104,15 @@ bool writeFlashContents ()
 void miseAjourCible() {
   if (isAuthenticated) {
 
+    choix_firmware = (char)Serial.read();
+    if (choix_firmware == '1') {
+      wantedFile = "Demo1.hex";
+    } else if (choix_firmware == '2') {
+      wantedFile = "Demo2.hex";
+    } else {
+      wantedFile = "firmware.hex";
+    }
+
     digitalWrite (readyLED, LOW);
 
     if (!startProgramming ())
@@ -1239,7 +1248,7 @@ void loop ()
 
   digitalWrite (readyLED, HIGH);
 
-  if(isAuthenticating) {
+  if (isAuthenticating) {
     blink (workingLED, noLED, 1, 1);
   }
 
