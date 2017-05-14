@@ -111,7 +111,8 @@ typedef enum {
 
   MSG_IS_AUTHENTICATING,
   MSG_AUTH_KO,
-  MSG_AUTH_OK
+  MSG_AUTH_OK,
+  MSG_UNEXPECTED
 } msgType;
 
 
@@ -397,6 +398,7 @@ void ShowMessage (const byte which)
     case MSG_IS_AUTHENTICATING:               blink (workingLED, noLED, 1, 10); break;
     case MSG_AUTH_KO:                         blink (errorLED, workingLED, 3, 2); break;
     case MSG_AUTH_OK:                         blink (readyLED, workingLED, 3, 2); break;
+    case MSG_UNEXPECTED:                      blink (errorLED, noLED, 1, 1); break;
 
     default:                                  blink (errorLED, 10, 10);  break;   // unknown error
   }  // end of switch on which message
@@ -1207,6 +1209,7 @@ void startAuthent()
 //------------------------------------------------------------------------------
 char * fileName = "firmware2.hex";
 char stopChar = '_';
+char upCharBuff;
 void uploadFile() {
   isUploading = true;
 
@@ -1214,17 +1217,16 @@ void uploadFile() {
     ShowMessage (MSG_NO_SD_CARD);
     delay (1000);
   }
-  char charBuff;
   sd.remove(fileName);
   File myFile = sd.open(fileName, FILE_WRITE);
   // if the file opened okay, write to it:
   if (myFile) {
-    charBuff = Serial.read();
-    while (charBuff != stopChar) {
+    upCharBuff = Serial.read();
+    while (upCharBuff != stopChar) {
       if (Serial.available()) {
-        charBuff = (char)Serial.read();
-        if (charBuff != stopChar) {
-          myFile.print(charBuff);
+        upCharBuff = (char)Serial.read();
+        if (upCharBuff != stopChar) {
+          myFile.print(upCharBuff);
         }
       }
     }
@@ -1236,6 +1238,15 @@ void uploadFile() {
     Serial.println("error opening file");
   }
 
+  isUploading = false;
+}
+
+void cancel() {
+  isAuthenticating = false;
+  isAuthenticated = false;
+  if (isUploading) {
+    upCharBuff = stopChar;
+  }
   isUploading = false;
 }
 
@@ -1259,6 +1270,8 @@ void loop ()
     // demande d'authentification
     if (command == 'A') {
       startAuthent();
+    } else if (command == 'X') {
+      cancel();
     } else if (isAuthenticating) {
       if (command == 'R') {
         // on lit tout le serial avant d'aller plus loin
@@ -1270,6 +1283,8 @@ void loop ()
         }
         //
         checkAuthent();
+      } else {
+        ShowMessage (MSG_UNEXPECTED);
       }
     } else if (isAuthenticated) {
       // actions disponibles uniquement si authentifié
@@ -1277,7 +1292,11 @@ void loop ()
         uploadFile();
       } else if (command == 'M') {
         miseAjourCible();
+      } else {
+        ShowMessage (MSG_UNEXPECTED);
       }
+    } else {
+      ShowMessage (MSG_UNEXPECTED);
     }
   }
 }// end of loop

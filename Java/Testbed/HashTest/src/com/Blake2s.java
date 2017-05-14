@@ -12,7 +12,7 @@ public class Blake2s {
 
 	public static void main(String[] args) {
 		Blake2s b2s = new Blake2s(32, null);
-		b2s.update("wisefu2017GFItVFwDvPGsWDnIQxeRHWI".getBytes());
+		b2s.update("wisefu2017GFIQjXmaJAWSbrmKkHynWXt".getBytes());
 		byte[] digest = b2s.digest();
 		String hexStr = bytesToHex(digest);
 		System.out.println(hexStr);
