@@ -5,33 +5,31 @@
     sketch.
 */
 // Recommend only use IRLibRecvPCI or IRLibRecvLoop for best results
-#include <IRLibRecvPCI.h>
+//#include <IRLibRecvPCI.h>
+#include <IRremote.h>
 
-IRrecvPCI myReceiver(3);//pin number for the receiver
+IRrecv myReceiver(13);//pin number for the receiver
+decode_results results;
+//IRsend            irsend;
+//int data[] = {9000, 4500, 560, 560, 560, 560, 560, 1690, 560, 560, 560, 560, 560, 560, 560, 560, 560, 560, 560, 1690, 560, 1690, 560, 560, 560, 1690, 560, 1690, 560, 1690, 560, 1690, 560, 1690, 560, 560, 560, 560, 560, 560, 560, 1690, 560, 560, 560, 560, 560, 560, 560, 560, 560, 1690, 560, 1690, 560, 1690, 560, 560, 560, 1690, 560, 1690, 560, 1690, 560, 1690, 560, 39416, 9000, 2210, 560}; //AnalysIR Batch Export (IRremote) - RAW
 
 void setup() {
   Serial.begin(9600);
   while (!Serial) {
     ; // wait for serial port to connect. Needed for native USB port only
-  }
+    }
   myReceiver.enableIRIn(); // Start the receiver
   Serial.println(F("Ready to receive IR signals"));
 }
 
 void loop() {
   //Continue looping until you get a complete signal received
-  if (myReceiver.getResults()) {
-    /*Serial.println(F("Do a cut-and-paste of the following lines into the "));
-      Serial.println(F("designated location in rawSend.ino"));
-      Serial.print(F("\n#define RAW_DATA_LEN "));
-      Serial.println(recvGlobal.recvLength,DEC);
-      Serial.print(F("uint16_t rawData[RAW_DATA_LEN]={\n\t"));*/
-    for (bufIndex_t i = 1; i < recvGlobal.recvLength; i++) {
-      Serial.print(recvGlobal.recvBuffer[i], DEC);
-      Serial.print(F(", "));
-      if ( (i % 8) == 0) Serial.print(F("\n\t"));
-    }
-    //Serial.println(F("1000};"));//Add arbitrary trailing space
-    myReceiver.enableIRIn();      //Restart receiver
+  if (myReceiver.decode(&results)) {
+    Serial.println(results.value, HEX);
+    myReceiver.resume(); // Receive the next value
   }
+  /*delay(2000);
+  irsend.sendRaw(data, sizeof(data) / sizeof(data[0]), 38);
+    myReceiver.resume(); // Receive the next value
+  myReceiver.enableIRIn(); // Start the receiver*/
 }

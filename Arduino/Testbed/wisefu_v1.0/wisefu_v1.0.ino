@@ -1155,6 +1155,7 @@ void checkAuthent() {
   if (memcmp(auth_hash, serialContent, sizeof(auth_hash)) != 0) {
     //Serial.println("auth KO...");
     ShowMessage(MSG_AUTH_KO);
+    cancel();
   } else {
     //Serial.println("auth OK!");
     isAuthenticated = true;
