@@ -1,88 +1,86 @@
 package com;
 
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.util.Arrays;
 
+import javax.swing.JButton;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JTextField;
+
 import jssc.SerialPort;
-import jssc.SerialPortEvent;
-import jssc.SerialPortEventListener;
-import jssc.SerialPortException;
 
 public class Blake2s {
 	static SerialPort serialPort = new SerialPort("COM7");
 
 	public static void main(String[] args) {
-		Blake2s b2s = new Blake2s(32, null);
-		b2s.update("wisefu2017GFIhtdJXtFRbdJVDivBkNHQ".getBytes());
-		byte[] digest = b2s.digest();
-		String hexStr = bytesToHex(digest);
-		System.out.println(hexStr);
-		System.out.print("82 "); // 'R' ASCII
-		for (int i = 0; i < hexStr.length() - 1; i += 2) {
-			String hex = "" + hexStr.charAt(i) + hexStr.charAt(i + 1);
-			System.out.print(Integer.parseInt(hex, 16) + " ");
-		}
-		/*
-		 * final BufferedReader br = new BufferedReader(new
-		 * InputStreamReader(System.in)); Thread consoleIn = new Thread(new
-		 * Runnable() {
-		 * 
-		 * @Override public void run() { try { String input = br.readLine();
-		 * System.out.println("input:" + input); if (input.charAt(0) == 'R') {
-		 * 
-		 * input = input.substring(1); String[] split = input.split("-"); int[]
-		 * toSend = new int[split.length + 1]; toSend[0] = (byte) 'R';
-		 * System.out.println(Integer.toBinaryString((byte) 'R')); int i = 1;
-		 * for (String ints : split) { byte arduinoByte = (byte)
-		 * Integer.parseInt(ints); toSend[i] = arduinoByte; i++; }
-		 * serialPort.writeIntArray(toSend);
-		 * 
-		 * serialPort.writeInt((byte) 'R'); serialPort.writeInt((byte) 113); } }
-		 * catch (Exception ex) { System.err.println(ex); } } });
-		 * consoleIn.start(); // try { serialPort.openPort();// Open serial port
-		 * serialPort.setParams(SerialPort.BAUDRATE_9600, SerialPort.DATABITS_8,
-		 * SerialPort.STOPBITS_1, SerialPort.PARITY_NONE); int mask =
-		 * SerialPort.MASK_RXCHAR + SerialPort.MASK_CTS + SerialPort.MASK_DSR;//
-		 * Prepare // mask serialPort.setEventsMask(mask);// Set mask
-		 * serialPort.addEventListener(new SerialPortReader());
-		 * serialPort.writeBytes("A".getBytes()); // serialPort.closePort(); }
-		 * catch (SerialPortException ex) { System.err.println(ex); }
-		 */
-	}
+		JFrame fenetre = new JFrame();
+		fenetre.setTitle("WISEFU Authentification Challenge");
+		fenetre.setSize(1000, 200);
+		fenetre.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+		final JTextField tfHexa = new JTextField();
+		final JTextField tfReponse = new JTextField();
 
-	static class SerialPortReader implements SerialPortEventListener {
+		GridBagConstraints c = new GridBagConstraints();
+		c.fill = GridBagConstraints.HORIZONTAL;
 
-		public void serialEvent(SerialPortEvent event) {
-			if (event.isRXCHAR()) {// If data is available
-				try {
+		JPanel pan = new JPanel(new GridBagLayout());
+		c.weightx = 0.5;
+		pan.add(new JLabel("Challenge : "), c);
+		final JTextField tfChallenge = new JTextField();
+		c.gridx = 1;
+		c.weightx = 4;
+		pan.add(tfChallenge, c);
 
-					byte buffer[] = serialPort.readBytes(10);
-					System.out.println("");
-					while (buffer.length > 0) {
-						for (byte b : buffer) {
-							System.out.print(b);
-							System.out.print("[" + ((char) b) + "] ");
-						}
-						buffer = serialPort.readBytes(10);
-					}
-					System.out.println("");
-					// serialPort.closePort();
-				} catch (SerialPortException ex) {
-					System.out.println(ex);
+		c.gridy = 1;
+		c.gridx = 0;
+		c.weightx = 0.5;
+		JButton btnOk = new JButton("OK");
+		btnOk.addActionListener(new ActionListener() {
+
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				Blake2s b2s = new Blake2s(32, null);
+				String challenge = "wisefu2017GFI" + tfChallenge.getText().trim();
+				b2s.update(challenge.getBytes());
+				byte[] digest = b2s.digest();
+				String hexStr = bytesToHex(digest);
+				tfHexa.setText(hexStr);
+				StringBuilder respB = new StringBuilder("82 "); // 'R' ASCII
+				for (int i = 0; i < hexStr.length() - 1; i += 2) {
+					String hex = "" + hexStr.charAt(i) + hexStr.charAt(i + 1);
+					respB.append(Integer.parseInt(hex, 16)).append(" ");
 				}
-			} else if (event.isCTS()) {// If CTS line has changed state
-				if (event.getEventValue() == 1) {// If line is ON
-					System.out.println("CTS - ON");
-				} else {
-					System.out.println("CTS - OFF");
-				}
-			} else if (event.isDSR()) {// /If DSR line has changed state
-				if (event.getEventValue() == 1) {// If line is ON
-					System.out.println("DSR - ON");
-				} else {
-					System.out.println("DSR - OFF");
-				}
+				tfReponse.setText(respB.toString().trim());
 			}
-		}
+		});
+		pan.add(btnOk, c);
+		c.gridx = 1;
+		pan.add(new JLabel(" "), c);
+
+		c.gridy = 2;
+		c.gridx = 0;
+		c.weightx = 0.5;
+		pan.add(new JLabel("Réponse : "), c);
+		c.weightx = 4;
+		c.gridx = 1;
+		pan.add(tfReponse, c);
+
+		c.gridy = 3;
+		c.gridx = 0;
+		c.weightx = 0.5;
+		pan.add(new JLabel("Hexa : "), c);
+		c.weightx = 4;
+		c.gridx = 1;
+		pan.add(tfHexa, c);
+
+		fenetre.setContentPane(pan);
+
+		fenetre.setVisible(true);
 	}
 
 	private final static char[] hexArray = "0123456789ABCDEF".toCharArray();
